@@ -1,0 +1,50 @@
+============================================================================================
+EXPERIMENT 1 - DAMPED HARMONIC OSCILLATOR
+============================================================================================
+torch 2.5.1+cu121 | device cpu | threads 10 | dtype float64 | seed 0
+equation   : m x'' + mu x' + k x = 0   with m=1.0, mu=4.0, k=400.0
+derived    : delta=2.0000  omega0=20.0000  omega=19.8997  period=0.3157
+network    : [1, 32, 32, 32, 1] tanh, Xavier init
+training   : Adam lr=0.001 x 20000 steps, then L-BFGS (max 3000 it)
+data       : 18 readings on [0, 0.4] | collocation: 60 points on [0, 1]
+--------------------------------------------------------------------------------------------
+  [naive data only       ] full=2.385e+00  in=2.470e-03  out=5.630e+00  loss=1.307e-05  adam=21.3s  lbfgs=3.5s (3000 it)
+  [PINN lam=1e-4         ] full=6.435e-05  in=1.909e-05  out=1.463e-04  loss=2.325e-03  adam=34.6s  lbfgs=12.1s (2013 it)
+  [PINN lam=1e-5         ] full=1.912e-04  in=2.357e-05  out=4.485e-04  loss=1.923e-05  adam=32.2s  lbfgs=7.2s (3000 it)
+  [PINN lam=1e-3         ] full=5.314e-05  in=3.312e-05  out=1.035e-04  loss=5.215e-04  adam=31.7s  lbfgs=8.0s (2736 it)
+  [naive window 0.6      ] full=7.260e-01  in=7.299e-03  out=2.545e+00  loss=1.183e-07  adam=10.8s  lbfgs=2.1s (2689 it)
+  [PINN window 0.6       ] full=4.247e-05  in=2.495e-05  out=1.231e-04  loss=1.397e-04  adam=56.2s  lbfgs=20.6s (2787 it)
+============================================================================================
+TABLE 1 - SETUP
+--------------------------------------------------------------------------------------------
+item                        value
+equation                    m x'' + mu x' + k x = 0
+constants                   m=1.0, mu=4.0, k=400.0
+initial conditions          x(0)=1, x'(0)=0
+network                     [1, 32, 32, 32, 1] tanh
+trainable parameters        2209
+readings                    18 on [0, 0.4]
+collocation points          60 on [0, 1]
+physics weight              1e-4 (also 1e-5, 1e-3)
+optimiser                   Adam 0.001 x 20000, then L-BFGS
+evaluation grid             400 points on [0, 1]
+seed                        0
+environment                 torch 2.5.1+cu121, float64, 10 threads
+============================================================================================
+TABLE 2 - MAIN COMPARISON
+--------------------------------------------------------------------------------------------
+model                err inside   err outside     err full   adam s  lbfgs s  lbfgs it   final loss
+naive data only       2.470e-03     5.630e+00    2.385e+00     21.3      3.5      3000    1.307e-05
+PINN lam=1e-4         1.909e-05     1.463e-04    6.435e-05     34.6     12.1      2013    2.325e-03
+============================================================================================
+TABLE 3 - VARIANTS
+--------------------------------------------------------------------------------------------
+run                   lambda   window   err inside   err outside     err full
+PINN lam=1e-5          1e-05      0.4    2.357e-05     4.485e-04    1.912e-04
+PINN lam=1e-4          1e-04      0.4    1.909e-05     1.463e-04    6.435e-05
+PINN lam=1e-3          1e-03      0.4    3.312e-05     1.035e-04    5.314e-05
+naive window 0.6           -      0.6    7.299e-03     2.545e+00    7.260e-01
+PINN window 0.6        1e-04      0.6    2.495e-05     1.231e-04    4.247e-05
+============================================================================================
+figures and results.json saved in: G:\My Drive\POWM\Python\PINN\out_exp1
+============================================================================================

@@ -1,0 +1,69 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ─── MATLAB / Octave ──────────────────────────────────────
+*.asv
+*.mex*
+*.slxc
+slprj/
+octave-workspace
+
+# ─── LaTeX ────────────────────────────────────────────────
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.synctex.gz
+*.toc
+
+# ─── CFD / Engineering software ───────────────────────────
+*.cas
+*.dat.gz
+*.msh
+*.trn
+processor*/
+postProcessing/
+*.foam
+*.wbpj
+*_files/dp0/
+
+# ─── Office temp files ────────────────────────────────────
+~$*.doc*
+~$*.xls*
+~$*.ppt*
+.~lock.*
+
+# ─── Large / generated data ───────────────────────────────
+# Raw datasets are usually too big for git. Keep a README in
+# data/raw/ describing where each file comes from instead.
+# البيانات الخام غالباً أكبر من أن تُرفع. اكتفِ بملف يشرح مصدرها.
+data/raw/**
+!data/raw/.gitkeep
+!data/raw/README.md
+*.csv.gz
+*.h5
+*.hdf5
+*.mat
+*.vtk
+*.vtu
+
+# ─── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Editors ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
