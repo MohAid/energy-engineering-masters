@@ -42,7 +42,7 @@ python src/exp1_oscillator.py
 
 </div>
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MohAid/energy-engineering-masters/blob/main/courses/05-pinn/projects/pinn-01-oscillator-foundations/notebook.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/MohAid/energy-engineering-masters/blob/main/projects/pinn/pinn-01-oscillator-foundations/notebook.ipynb)
 
 <div dir="rtl">
 

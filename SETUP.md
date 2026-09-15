@@ -26,7 +26,7 @@ cd energy-engineering-masters
 </div>
 
 ```bash
-cd courses/05-pinn/projects/pinn-01-oscillator-foundations
+cd projects/pinn/pinn-01-oscillator-foundations
 
 python -m venv .venv
 .venv\Scripts\activate
@@ -48,12 +48,22 @@ python src/exp1_oscillator.py
 </div>
 
 ```bash
-./scripts/new-project.sh 05-pinn pinn-02-heat-conduction
+./scripts/new-project.sh 01-advanced-fluid-mechanics boundary-layer
 ```
 
 <div dir="rtl">
 
-ينسخ السكربت القالب من `_templates/project-template/` إلى مجلد مشاريع المقرر. بعدها: املأ README المشروع، وأضف سطراً في جدول المقرر، وسطراً في جدول المستودع الرئيسي.
+ينسخ السكربت القالب من `_templates/project-template/` إلى مجلد مشاريع المقرر. أما المشروع المستقل عن المقررات فيوضع تحت `projects/` بنسخ القالب يدوياً:
+
+</div>
+
+```bash
+cp -r _templates/project-template projects/pinn/pinn-02-heat-conduction
+```
+
+<div dir="rtl">
+
+بعدها في الحالتين: املأ README المشروع، وأضف سطراً في جدول القسم، وسطراً في جدول المستودع الرئيسي.
 
 ## الهوية عند الرفع
 

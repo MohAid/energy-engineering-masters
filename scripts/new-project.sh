@@ -4,7 +4,7 @@
 # الاستخدام:
 #   ./scripts/new-project.sh <course-folder> <project-slug>
 # مثال:
-#   ./scripts/new-project.sh 05-pinn pinn-02-heat-conduction
+#   ./scripts/new-project.sh pinn pinn-02-heat-conduction
 
 set -euo pipefail
 

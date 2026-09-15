@@ -12,7 +12,7 @@
 
 | المشروع | الموضوع | الحالة |
 |---|---|:---:|
-| [pinn-01-oscillator-foundations](projects/pinn-01-oscillator-foundations) | بناء دالة الخسارة على متذبذب توافقي مخمد | منجز |
+| [pinn-01-oscillator-foundations](pinn-01-oscillator-foundations) | بناء دالة الخسارة على متذبذب توافقي مخمد | منجز |
 
 بقية مشاريع السلسلة منجزة عندي محلياً ولم تُرفع بعد، وتُضاف هنا عند رفعها.
 

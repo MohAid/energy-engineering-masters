@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 التجربة الأولى — متذبذب توافقي مخمد
 
 مقارنة شبكتين متطابقتين في كل شيء، والفرق الوحيد بينهما أن الثانية تضع المعادلة
 الحاكمة في دالة الخسارة. الأولى تتعلم من ثماني عشرة قراءة في أول 40% من الزمن،
-والثانية تتعلم من القراءات نفسها ومن المعادلة عند ستين نقطة على المجال كله.
+والثانية تتعلم من القراءات نفسها بالإضافة إلى تحقيق المعادلة عند ستين نقطة على المجال كله.
 
 المعادلة: m x'' + mu x' + k x = 0 مع x(0)=1 و x'(0)=0، وثوابتها m=1, mu=4, k=400.
 التخامد ضعيف أمام القساوة، فالحركة تذبذب متناقص السعة، ولها حل تحليلي يقاس عليه.
@@ -14,53 +13,105 @@
 """
 
 # المكتبات
-import os, time, json
+import os
+import time
+import json
+from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib
-# خلفية رسم تحفظ الأشكال في ملفات بلا فتح نافذة
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# الحساب بدقة مضاعفة، فالدقة المطلوبة قريبة من 1e-5
+""" MatPlotLib Configuration """
+matplotlib.use("Agg")  # خلفية رسم تحفظ الأشكال في ملفات بلا فتح نافذة
+
+""" Torch Alternatives: """
+# JAX: تفاضل آلي قوي جداً ومناسب للمشتقات العالية، وسريع بفضل التجميع (jit).
+#     بالمقابل أسلوبه وظيفي بحت، ومنحنى تعلمه أصعب.
+# TensorFlow: استعملها Raissi-2019 وزملاؤه في الورقة الأصلية لـ PINN
+#     لكن  أغلب الأبحاث الجديدة اليوم أصبحت على PyTorch أو JAX.
+# DeepXDE: مكتبة عالية المستوى مبنية فوق PyTorch أو TF أو JAX.
+#     بتكتب المعادلة وشروطها بسطور قليلة وهي بتبني الباقي.
+#     مريحة، لكنها تخفي التفاصيل.
+
+""" Torch Configuration """
+# معايرة دقة حفظ الأرقام العشرية لأجل أي تنسور أو وزن في تورش
+
+# مع L-BFGS ضروري أن نستعمل float64 !
+
+# الخيارات المتاحة:
+# float16: 1e-4: تسريع الشبكات الضخمة على كرت الشاشة, يعطي 4 خانات عشرية تقريباً  # noqa
+# bfloat16: 1e-7: تدريب النماذج اللغوية الكبيرة, يعطي 3 إلى 4 خانات عشرية تقريباً  # noqa
+# float32: 1.2e-7: الافتراضي بالتعلم العميق, يعطي 7 خانات عشرية تقريباً  # noqa
+# float64: 2.2e-16: الحساب العلمي، واختيارنا, يعطي 15 إلى 16 خانة عشرية تقريباً  # noqa
+
+# نستطيع إما تحديد سلوك المكتبة كاملة عبر:
+#
+# وهذا يضعف الذاكرة والسرعة ويطيل الزمن وهو أمر لا يهمنا في مثالنا هنا لأنه يحوي فقط 2209 عقدة # noqa
+# كما أن بعض الأجهزة لا تدعمه،
+# أو يمكن أن نحدد سلوك كائن محدد عبر استعمال:
+# model = Net(LAYERS).double() # فقط الأوزان
+# t = torch.tensor(data, dtype=torch.float64) # فقط التنسور
+
+# NOTE: When we generate a torch tensor from a numpy matrix it comes with its numpy origin curacy
+# np.linspace generates float64 matrix so no problem here.
+
+# في حال استوردت دالة إلى مكان آخر فإن عملية الاستيراد ستفعل هذا الإعداد العام ! # noqa
+# سيتم إعداد تورش بهذا الشكل على المستوى الأعلى وقد يؤثر على عمل المستورد ! # noqa
+# حينها يجب أن تعدل السلوك ليصبح تحديد الدقة عند إنشاء الكائن وليس إعداداً عاماً ! # noqa
+
+# قبل المعايرة:
+# print(torch.tensor([1.0]).dtype)    # torch.float32  (الافتراضي)
+# بعد المعايرة:
+# print(torch.tensor([1.0]).dtype)    # torch.float64
 torch.set_default_dtype(torch.float64)
 
-# الجهاز: المعالج افتراضاً
-DEV = os.environ.get("PINN_DEVICE", "cpu")
-if DEV == "auto":
-    DEV = "cuda" if torch.cuda.is_available() else "cpu"
+""" Define the processing device """
+DEV = torch.device("cpu")
+# تحديد جهاز التدريب إما المعالج أو كرت الشاشة
+# DEV = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# نتركه على الافتراضي وهو المعالج لأن المسألة صغيرة وكلفة النقل إلى كرت الشاشة ستكون أكبر من المعالجة # noqa
+# float64 أسرع على المعالج
+# أيضاً بعض العمليات على كروت الشاشة غير حتمية, ذات الكود وبذات البذرة قد يعطي نتائج مختلفة في الخانات الأخيرة # noqa
 
-# مجلد المخرجات بجانب هذا الملف
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out_exp1")
-os.makedirs(OUT, exist_ok=True)
+""" Output Folder """
+stamp = time.strftime("%Y%m%d_%H%M%S")
+OUT = Path(__file__).resolve().parent / f"out_exp1_{stamp}"
+OUT.mkdir(parents=True, exist_ok=True)
 
+""" Problem Constants """
 # ثوابت المسألة: الكتلة ومعامل التخامد وقساوة النابض
+# m x'' + mu x' + k x = 0
+# x(0) = 1 ,  x'(0) = 0
 M, MU, K = 1.0, 4.0, 400.0
-# معدل تناقص السعة
-DELTA = MU / (2 * M)
-# التردد الطبيعي غير المخمد
-OMEGA0 = np.sqrt(K / M)
-# التردد المخمد الفعلي
-OMEGA = np.sqrt(OMEGA0 ** 2 - DELTA ** 2)
+DELTA = MU / (2 * M)  # معدل تناقص السعة = 2 وهو كمثال Ben Moseley المرجعي في شرح ال PINN  # noqa
+OMEGA0 = np.sqrt(K / M)  # التردد الطبيعي غير المخمد = 20 وهو كمثال Ben Moseley المرجعي في شرح ال PINN  # noqa
+OMEGA = np.sqrt(OMEGA0 ** 2 - DELTA ** 2)  # التردد المخمد الفعلي
+T = 2 * np.pi / OMEGA  # الدور
 
-# بذرة ثابتة ليبدأ النموذجان من الأوزان نفسها
-SEED = 0
-# بنية الشبكة: دخل، ثلاث طبقات مخفية، خرج
-LAYERS = [1, 32, 32, 32, 1]
-# عدد القراءات، وعدد نقاط فرض المعادلة
-N_DATA, N_COLL = 18, 60
-# مرحلتا التدريب
-ADAM_STEPS, ADAM_LR = 20_000, 1e-3
+""" Experiment (Methode) Constants """
+SEED = 0  # بذرة ثابتة ليبدأ النموذجان من الأوزان نفسها
+LAYERS = [1, 32, 32, 32, 1]  # بنية الشبكة: دخل، ثلاث طبقات مخفية، خرج
+N_DATA, N_COLL = 18, 60  # عدد القراءات، وعدد نقاط فرض المعادلة
+ADAM_STEPS, ADAM_LR = 20_000, 1e-3  # مرحلتا التدريب
 LBFGS_STEPS = 3_000
 
 
-def exact(t):
-    """الحل التحليلي المرجعي للمتذبذب المخمد."""
+""" Validation """
+# الحل التحليلي أدناه يفترض تخامداً ضعيفاً، لذا سنوقف التشغيل إذا تمت مخالفة الشرط
+assert DELTA < OMEGA0, "This code is valid only for underdamped motion (DELTA < OMEGA0)"
+
+
+""" The functions """
+
+
+def exact(t: float | np.ndarray) -> np.float64 | np.ndarray:
+    """الحل التحليلي المرجعي للمتذبذب المخمد. تستعمل هذه الدالة فقط لأجل المقارنة ولا علاقة لها بللتدريب."""  # noqa
     return np.exp(-DELTA * t) * (np.cos(OMEGA * t) + (DELTA / OMEGA) * np.sin(OMEGA * t))
 
 
-class Net(nn.Module):
+class Net(nn.Module):  # nn.Module الأصل الذي ترث منه أي شبكة
     """شبكة أمامية بتفعيل أملس، لأن حد الفيزياء يحتاج المشتق الثاني."""
 
     def __init__(self, layers):
@@ -68,13 +119,15 @@ class Net(nn.Module):
         seq = []
         # طبقة خطية بعد كل طبقة، والتفعيل بينها لا بعد الأخيرة
         for i in range(len(layers) - 1):
-            seq.append(nn.Linear(layers[i], layers[i + 1]))
+            seq.append(nn.Linear(layers[i], layers[i + 1]))  # nn.Linear طبقة خطية
             if i < len(layers) - 2:
-                seq.append(nn.Tanh())
+                seq.append(nn.Tanh())  # nn.Tanh هي دالة التفعيل
+        # سلسلة طبقات
         self.net = nn.Sequential(*seq)
         # تهيئة إكسافييه تناسب التفعيل المستعمل
         for m in self.net:
             if isinstance(m, nn.Linear):
+                # تهيئة الأوزان
                 nn.init.xavier_normal_(m.weight)
                 nn.init.zeros_(m.bias)
 
@@ -101,7 +154,7 @@ def make_loss(model, t_data, x_data, t_coll, use_physics, lam):
         loss = torch.mean((model(t_data) - x_data) ** 2)
         # هذا هو الفرق الوحيد بين النموذجين
         if use_physics:
-        # الوزن لموازنة مقدارَي الحدين، لا لترجيح أحدهما
+            # الوزن لموازنة مقدارَي الحدين، لا لترجيح أحدهما
             loss = loss + lam * torch.mean(residual(model, t_coll) ** 2)
         return loss
     return loss_fn
@@ -109,6 +162,7 @@ def make_loss(model, t_data, x_data, t_coll, use_physics, lam):
 
 def run(tag, use_physics, lam=1e-4, t_max_data=0.4):
     """تشغيل كامل: بناء، ثم تدريب على مرحلتين، ثم تقييم."""
+
     # تصفير المولدات العشوائية قبل كل تشغيل
     torch.manual_seed(SEED)
     np.random.seed(SEED)
@@ -126,7 +180,7 @@ def run(tag, use_physics, lam=1e-4, t_max_data=0.4):
     # المرحلة الأولى: استكشاف بمحسن من الرتبة الأولى
     opt = torch.optim.Adam(model.parameters(), lr=ADAM_LR)
     hist = []
-    t0 = time.perf_counter()
+    t0 = time.perf_counter()  # لقياس فرق الزمن الحقيقي المستهلك لتنفيذ الكود wall-clock
     for step in range(ADAM_STEPS):
         opt.zero_grad(set_to_none=True)
         loss = loss_fn()
@@ -181,7 +235,7 @@ def run(tag, use_physics, lam=1e-4, t_max_data=0.4):
     return res
 
 
-def line(c="="):
+def line(c="=") -> None:
     """سطر فاصل يبقي التقرير مقروءاً."""
     print(c * 92)
 
@@ -193,7 +247,7 @@ if __name__ == "__main__":
     # بيانات البيئة، لإعادة الإنتاج
     print(f"torch {torch.__version__} | device {DEV} | threads {torch.get_num_threads()} | dtype float64 | seed {SEED}")
     print(f"equation   : m x'' + mu x' + k x = 0   with m={M}, mu={MU}, k={K}")
-    print(f"derived    : delta={DELTA:.4f}  omega0={OMEGA0:.4f}  omega={OMEGA:.4f}  period={2*np.pi/OMEGA:.4f}")
+    print(f"derived    : delta={DELTA:.4f}  omega0={OMEGA0:.4f}  omega={OMEGA:.4f}  T={T:.4f}")
     print(f"network    : {LAYERS} tanh, Xavier init")
     print(f"training   : Adam lr={ADAM_LR} x {ADAM_STEPS} steps, then L-BFGS (max {LBFGS_STEPS} it)")
     print(f"data       : {N_DATA} readings on [0, 0.4] | collocation: {N_COLL} points on [0, 1]")
@@ -207,7 +261,7 @@ if __name__ == "__main__":
     # تغيير وزن الفيزياء لاختبار حساسية النتيجة له
     R["pinn_l5"] = run("PINN lam=1e-5", True, lam=1e-5)
     R["pinn_l3"] = run("PINN lam=1e-3", True, lam=1e-3)
-    # توسيع نافذة الرصد لاختبار هل تكفي زيادة البيانات وحدها
+    # توسيع نافذة الرصد لاختبار إن كان ذلك يكفي
     R["naive_w6"] = run("naive window 0.6", False, t_max_data=0.6)
     R["pinn_w6"] = run("PINN window 0.6", True, lam=1e-4, t_max_data=0.6)
 
