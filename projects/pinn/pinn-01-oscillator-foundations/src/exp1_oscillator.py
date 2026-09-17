@@ -17,6 +17,7 @@ import os
 import time
 import json
 from pathlib import Path
+from collections.abc import Callable
 import numpy as np
 import torch
 import torch.nn as nn
@@ -94,7 +95,7 @@ T = 2 * np.pi / OMEGA  # الدور
 SEED = 0  # بذرة ثابتة ليبدأ النموذجان من الأوزان نفسها
 LAYERS = [1, 32, 32, 32, 1]  # بنية الشبكة: دخل، ثلاث طبقات مخفية، خرج
 N_DATA, N_COLL = 18, 60  # عدد القراءات، وعدد نقاط فرض المعادلة
-ADAM_STEPS, ADAM_LR = 20_000, 1e-3  # مرحلتا التدريب
+ADAM_STEPS, ADAM_LR = 20_000, 1e-3  # عدد الخطوات ومعدل التعلم أو حجم الخطوة
 LBFGS_STEPS = 3_000
 
 
@@ -111,10 +112,10 @@ def exact(t: float | np.ndarray) -> np.float64 | np.ndarray:
     return np.exp(-DELTA * t) * (np.cos(OMEGA * t) + (DELTA / OMEGA) * np.sin(OMEGA * t))
 
 
-class Net(nn.Module):  # nn.Module الأصل الذي ترث منه أي شبكة
-    """شبكة أمامية بتفعيل أملس، لأن حد الفيزياء يحتاج المشتق الثاني."""
+class Net(nn.Module):  # الأصل الذي ترث منه أي شبكة
+    """شبكة أمامية بتفعيل أملس، لأن حد الفيزياء يحتاج المشتق الثاني."""  # noqa
 
-    def __init__(self, layers):
+    def __init__(self, layers: list[int]) -> None:
         super().__init__()
         seq = []
         # طبقة خطية بعد كل طبقة، والتفعيل بينها لا بعد الأخيرة
@@ -125,62 +126,79 @@ class Net(nn.Module):  # nn.Module الأصل الذي ترث منه أي شبك
         # سلسلة طبقات
         self.net = nn.Sequential(*seq)
         # تهيئة إكسافييه تناسب التفعيل المستعمل
-        for m in self.net:
-            if isinstance(m, nn.Linear):
+        for layer in self.net:
+            if isinstance(layer, nn.Linear):
                 # تهيئة الأوزان
-                nn.init.xavier_normal_(m.weight)
-                nn.init.zeros_(m.bias)
+                nn.init.xavier_normal_(tensor=layer.weight, gain=1.0)
+                nn.init.zeros_(layer.bias)
 
-    def forward(self, t):
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
         return self.net(t)
 
 
-def residual(model, t):
+def residual(model: nn.Module, t: torch.Tensor) -> torch.Tensor:
     """باقي المعادلة عند نقاط زمنية: مقدار مخالفة الشبكة للفيزياء."""
     # الاشتقاق هنا بالنسبة للزمن لا للأوزان
-    t = t.requires_grad_(True)
+    t = t.detach().requires_grad_(True)
     x = model(t)
     # المشتق الأول ثم الثاني بالتفاضل الآلي
-    dx = torch.autograd.grad(x, t, torch.ones_like(x), create_graph=True)[0]
-    d2x = torch.autograd.grad(dx, t, torch.ones_like(dx), create_graph=True)[0]
+    dx = torch.autograd.grad(outputs=x, inputs=t, grad_outputs=torch.ones_like(x), create_graph=True)[0]
+    d2x = torch.autograd.grad(outputs=dx, inputs=t, grad_outputs=torch.ones_like(dx), create_graph=True)[0]
     # التعويض في طرف المعادلة الأيسر
     return M * d2x + MU * dx + K * x
 
 
-def make_loss(model, t_data, x_data, t_coll, use_physics, lam):
+def make_loss(model: nn.Module, t_data: torch.Tensor, x_data: torch.Tensor, t_coll: torch.Tensor,
+              use_physics: bool, lam: float) -> Callable[[], torch.Tensor]:
     """دالة الخسارة: حد البيانات وحده، أو معه حد الفيزياء."""
-    def loss_fn():
+    parts = {}  # آخر قيمة لكل حد، للتسجيل فقط قد نحتاج رسمه يوماً ما !
+
+    def loss_fn() -> torch.Tensor:
         # حد البيانات
-        loss = torch.mean((model(t_data) - x_data) ** 2)
+        l_data = torch.mean((model(t_data) - x_data) ** 2)
+        loss = l_data
+        parts["data"] = l_data.item()
         # هذا هو الفرق الوحيد بين النموذجين
         if use_physics:
+            l_phys = torch.mean(residual(model, t_coll) ** 2)
+            parts["phys"] = l_phys.item()
             # الوزن لموازنة مقدارَي الحدين، لا لترجيح أحدهما
-            loss = loss + lam * torch.mean(residual(model, t_coll) ** 2)
+            loss = loss + lam * l_phys
         return loss
+    loss_fn.parts = parts
     return loss_fn
 
 
-def run(tag, use_physics, lam=1e-4, t_max_data=0.4):
+def run(tag: str, use_physics: bool, lam: float = 1e-4, t_max_data: float = 0.4) -> dict:
     """تشغيل كامل: بناء، ثم تدريب على مرحلتين، ثم تقييم."""
+    # تحقق بسيط
+    assert 0.0 < t_max_data < 1.0, "observation window must lie inside (0, 1)"
 
     # تصفير المولدات العشوائية قبل كل تشغيل
     torch.manual_seed(SEED)
     np.random.seed(SEED)
 
+    # للتأكد من أن الشبكات ستبدأ من بارامترات متطابقة
+    # a = Net(LAYERS)
+    # b = Net(LAYERS)
+    # same = all(torch.equal(p, q) for p, q in zip(a.parameters(), b.parameters()))
+    # print(same)  # True
+
     # القراءات داخل نافذة الرصد وحدها
-    t_data_np = np.linspace(0.0, t_max_data, N_DATA).reshape(-1, 1)
-    t_data = torch.tensor(t_data_np, device=DEV)
-    x_data = torch.tensor(exact(t_data_np), device=DEV)
+    t_data_np = np.linspace(start=0.0, stop=t_max_data, num=N_DATA, endpoint=True).reshape(-1, 1)
+    x_data_np = exact(t_data_np)
+    t_data = torch.tensor(data=t_data_np, device=DEV)
+    x_data = torch.tensor(data=x_data_np, device=DEV)
     # نقاط التجميع موزعة على المجال كله، ومنها ما لا قراءة عنده
-    t_coll = torch.tensor(np.linspace(0.0, 1.0, N_COLL).reshape(-1, 1), device=DEV)
+    t_coll = torch.tensor(data=np.linspace(start=0.0, stop=1.0, num=N_COLL).reshape(-1, 1), device=DEV)
 
     model = Net(LAYERS).to(DEV)
     loss_fn = make_loss(model, t_data, x_data, t_coll, use_physics, lam)
 
     # المرحلة الأولى: استكشاف بمحسن من الرتبة الأولى
-    opt = torch.optim.Adam(model.parameters(), lr=ADAM_LR)
+    opt = torch.optim.Adam(params=model.parameters(), lr=ADAM_LR)
     hist = []
-    t0 = time.perf_counter()  # لقياس فرق الزمن الحقيقي المستهلك لتنفيذ الكود wall-clock
+    t0 = time.perf_counter()  # لقياس فرق الزمن الحقيقي المستهلك لتنفيذ الكود
     for step in range(ADAM_STEPS):
         opt.zero_grad(set_to_none=True)
         loss = loss_fn()
@@ -191,43 +209,54 @@ def run(tag, use_physics, lam=1e-4, t_max_data=0.4):
             hist.append((step, loss.item()))
     t_adam = time.perf_counter() - t0
 
-    # المرحلة الثانية: تحسين شبه نيوتني يقرّب الانحناء من تاريخ التدرجات
-    lbfgs = torch.optim.LBFGS(model.parameters(), max_iter=LBFGS_STEPS, history_size=50,
+    # المرحلة الثانية: تحسين شبه نيوتني يقرّب الانحناء من تاريخ التدرجات  # noqa
+    lbfgs = torch.optim.LBFGS(params=model.parameters(), max_iter=LBFGS_STEPS, history_size=50,
                               tolerance_grad=1e-12, tolerance_change=1e-14,
                               line_search_fn="strong_wolfe")
 
-    def closure():
+    def closure() -> torch.Tensor:
         """إعادة حساب الخسارة وتدرجها عند كل طول خطوة يجربه المحسن."""
         lbfgs.zero_grad(set_to_none=True)
-        loss = loss_fn()
-        loss.backward()
-        return loss
+        _loss = loss_fn()
+        _loss.backward()
+        return _loss
 
-    t1 = time.perf_counter()
     # نداء واحد ينفذ التحسين كله
-    final_loss = lbfgs.step(closure).item()
+    t1 = time.perf_counter()
+    loss_before = lbfgs.step(closure).item()
     t_lbfgs = time.perf_counter() - t1
+
+    # فحص الأوزان
+    if not all(torch.isfinite(p).all() for p in model.parameters()):
+        raise RuntimeError(f"{tag}: non-finite weights after L-BFGS")
+
     # عدد التكرارات المنفذة فعلاً، وبلوغ الحد يعني عدم التقارب
     n_iter = lbfgs.state_dict()["state"][0]["n_iter"]
+
+    # الخسارة الفعلية بالأوزان النهائية
+    final_loss = loss_fn().item()
 
     # التقييم على شبكة كثيفة مستقلة عن نقاط التدريب
     t_eval_np = np.linspace(0.0, 1.0, 400).reshape(-1, 1)
     with torch.no_grad():
         pred = model(torch.tensor(t_eval_np, device=DEV)).cpu().numpy()
-    ex = exact(t_eval_np)
+    _ex = exact(t_eval_np)
+
     # الخطأ النسبي، لابعدي
-    rel = lambda a, b: float(np.linalg.norm(a - b) / np.linalg.norm(b))
+    def rel(a, b) -> float:
+        return float(np.linalg.norm(a - b) / np.linalg.norm(b))
+
     # فصل داخل نافذة الرصد عن خارجها، وهو سؤال التجربة
     inside = t_eval_np <= t_max_data
 
     res = dict(tag=tag, physics=use_physics, lam=lam if use_physics else None,
                window=t_max_data, params=sum(p.numel() for p in model.parameters()),
-               rel_full=rel(pred, ex), rel_in=rel(pred[inside], ex[inside]),
-               rel_out=rel(pred[~inside], ex[~inside]), loss=final_loss,
+               rel_full=rel(pred, _ex), rel_in=rel(pred[inside], _ex[inside]),
+               rel_out=rel(pred[~inside], _ex[~inside]), loss_adam=loss_before, loss=final_loss,
                t_adam=t_adam, t_lbfgs=t_lbfgs, lbfgs_iters=int(n_iter))
     # مصفوفات للأشكال فقط، تحذف قبل حفظ النتائج
     res["_pred"], res["_hist"] = pred, hist
-    res["_tdata"], res["_xdata"] = t_data_np, exact(t_data_np)
+    res["_tdata"], res["_xdata"] = t_data_np, x_data_np
     # سطر تقدم لكل تشغيل
     print(f"  [{tag:22s}] full={res['rel_full']:.3e}  in={res['rel_in']:.3e}  "
           f"out={res['rel_out']:.3e}  loss={final_loss:.3e}  "
@@ -235,7 +264,7 @@ def run(tag, use_physics, lam=1e-4, t_max_data=0.4):
     return res
 
 
-def line(c="=") -> None:
+def line(c: str = "=") -> None:
     """سطر فاصل يبقي التقرير مقروءاً."""
     print(c * 92)
 
@@ -256,14 +285,14 @@ if __name__ == "__main__":
     # نتيجة كل تشغيل
     R = {}
     # المقارنة الأساسية
-    R["naive"] = run("naive data only", False)
-    R["pinn"] = run("PINN lam=1e-4", True, lam=1e-4)
+    R["naive"] = run(tag="naive data only", use_physics=False)
+    R["pinn"] = run(tag="PINN lam=1e-4", use_physics=True, lam=1e-4)
     # تغيير وزن الفيزياء لاختبار حساسية النتيجة له
-    R["pinn_l5"] = run("PINN lam=1e-5", True, lam=1e-5)
-    R["pinn_l3"] = run("PINN lam=1e-3", True, lam=1e-3)
+    R["pinn_l5"] = run(tag="PINN lam=1e-5", use_physics=True, lam=1e-5)
+    R["pinn_l3"] = run(tag="PINN lam=1e-3", use_physics=True, lam=1e-3)
     # توسيع نافذة الرصد لاختبار إن كان ذلك يكفي
-    R["naive_w6"] = run("naive window 0.6", False, t_max_data=0.6)
-    R["pinn_w6"] = run("PINN window 0.6", True, lam=1e-4, t_max_data=0.6)
+    R["naive_w6"] = run(tag="naive window 0.6", use_physics=False, t_max_data=0.6)
+    R["pinn_w6"] = run(tag="PINN window 0.6", use_physics=True, lam=1e-4, t_max_data=0.6)
 
     line()
     print("TABLE 1 - SETUP")
@@ -296,8 +325,8 @@ if __name__ == "__main__":
     for k in ["pinn_l5", "pinn", "pinn_l3", "naive_w6", "pinn_w6"]:
         r = R[k]
         # التشغيلات بلا فيزياء لا وزن لها
-        lam = f"{r['lam']:.0e}" if r["lam"] else "-"
-        print(f"{r['tag']:<18}{lam:>10}{r['window']:>9}{r['rel_in']:>13.3e}{r['rel_out']:>14.3e}{r['rel_full']:>13.3e}")
+        _lam = f"{r['lam']:.0e}" if r["lam"] else "-"
+        print(f"{r['tag']:<18}{_lam:>10}{r['window']:>9}{r['rel_in']:>13.3e}{r['rel_out']:>14.3e}{r['rel_full']:>13.3e}")
     line()
 
     # الأشكال

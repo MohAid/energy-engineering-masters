@@ -18,20 +18,23 @@ cp = gamma*R/(gamma - 1)
 
 
 # علاقات فانو منسوبة إلى الحالة الصوتية
-def fanno_length(M):
+def fanno_length(M: float | np.ndarray) -> float | np.ndarray:
     # الطول اللابعدي حتى الاختناق
     return (1 - M**2)/(gamma*M**2) \
         + (gamma + 1)/(2*gamma)*np.log((gamma + 1)*M**2/(2 + (gamma - 1)*M**2))
 
-def T_ratio(M):
+
+def T_ratio(M: float | np.ndarray) -> float | np.ndarray:
     # نسبة درجة الحرارة
     return (gamma + 1)/(2 + (gamma - 1)*M**2)
 
-def p_ratio(M):
+
+def p_ratio(M: float | np.ndarray) -> float | np.ndarray:
     # نسبة الضغط
     return np.sqrt(T_ratio(M))/M
 
-def mach_from_length(fld):
+
+def mach_from_length(fld: float) -> float:
     # استخراج رقم ماخ من الطول اللابعدي بطريقة التنصيف
     lo, hi = 1e-6, 1.0
     for _ in range(100):
